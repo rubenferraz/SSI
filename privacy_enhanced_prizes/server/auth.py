@@ -1,19 +1,21 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from passlib.hash import argon2
 import jwt
 import time
+from server.zkp import register_user, generate_challenge, verify_zkp
 
 router = APIRouter()
-
 SECRET_KEY = "superseguro"
 
-users_db = {}
-
-# Modelo Pydantic para receber os dados corretamente
-class UserData(BaseModel):
+# Estruturas de dados para requests
+class RegisterData(BaseModel):
     username: str
     password: str
+
+class LoginZKPData(BaseModel):
+    username: str
+    proof: str
+    challenge: str
 
 def create_jwt(username: str):
     payload = {
@@ -23,18 +25,20 @@ def create_jwt(username: str):
     return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
 
 @router.post("/register")
-def register(user: UserData):
-    if user.username in users_db:
-        raise HTTPException(status_code=400, detail="Utilizador já existe")
+def register(data: RegisterData):
+    return register_user(data.username, data.password)
 
-    hashed_password = argon2.hash(user.password)
-    users_db[user.username] = hashed_password
-    return {"message": "Utilizador registado com sucesso"}
+@router.get("/challenge")
+def get_challenge():
+    """ Envia um desafio ao cliente para iniciar o ZKP. """
+    challenge = generate_challenge()
+    return {"challenge": str(challenge)}
 
-@router.post("/login")
-def login(user: UserData):
-    if user.username not in users_db or not argon2.verify(user.password, users_db[user.username]):
-        raise HTTPException(status_code=401, detail="Credenciais inválidas")
-
-    token = create_jwt(user.username)
-    return {"token": token}
+@router.post("/login_zkp")
+def login(data: LoginZKPData):
+    """ Verifica se a prova de conhecimento é válida. """
+    if verify_zkp(data.username, int(data.proof), int(data.challenge)):
+        token = create_jwt(data.username)
+        return {"token": token}
+    
+    raise HTTPException(status_code=401, detail="Prova inválida")
